@@ -1,0 +1,61 @@
+#include "kwik_yyc/iff.hpp"
+#include <cstring>
+#include <fstream>
+#include <stdexcept>
+#include <array>
+
+namespace kwik::yyc {
+namespace {
+uint32_t rd32(const std::vector<uint8_t>& d, size_t o) {
+    if (o+4>d.size()) throw std::runtime_error("truncated game data");
+    uint32_t v; std::memcpy(&v,d.data()+o,4); return v;
+}
+}
+bool IffInfo::has(std::string_view tag) const {
+    for (const auto& c: chunks) if (c.tag==tag) return true;
+    return false;
+}
+std::string IffInfo::resource_name(std::string_view kind, uint32_t index) const {
+    for (const auto& r : resources) if (r.kind == kind && r.index == index) return r.name;
+    return {};
+}
+IffInfo parse_game_data(const std::filesystem::path& path) {
+    std::ifstream f(path,std::ios::binary);
+    if(!f) throw std::runtime_error("could not open game data: "+path.string());
+    std::vector<uint8_t> d(std::istreambuf_iterator<char>(f),{});
+    if(d.size()<8 || std::memcmp(d.data(),"FORM",4)!=0) throw std::runtime_error("game data is not a GameMaker FORM file");
+    IffInfo out; out.form_size=rd32(d,4);
+    for(uint64_t pos=8; pos+8<=d.size();) {
+        IffChunk c;
+        c.tag=std::string(reinterpret_cast<const char*>(d.data()+pos),4);
+        c.offset=pos; c.size=rd32(d,pos+4);
+        out.chunks.push_back(c);
+        const uint64_t next=pos+8ull+c.size;
+        if(next<=pos || next>d.size()) throw std::runtime_error("invalid IFF chunk size at offset "+std::to_string(pos));
+        pos=next;
+    }
+    auto gm_string = [&](uint32_t off) -> std::string {
+        if (off >= d.size()) return {};
+        size_t e = off;
+        while (e < d.size() && d[e]) ++e;
+        if (e == d.size()) return {};
+        return std::string(reinterpret_cast<const char*>(d.data()+off), e-off);
+    };
+    const std::array<std::string_view,8> resource_chunks = {"ROOM","OBJT","SPRT","SOND","FONT","BGND","PATH","SCPT"};
+    for (auto tag : resource_chunks) {
+        for (const auto& c : out.chunks) {
+            if (c.tag != tag || c.offset + 12 > d.size()) continue;
+            const uint32_t count = rd32(d, c.offset + 8);
+            if (c.offset + 12ull + uint64_t(count)*4ull > d.size()) continue;
+            for (uint32_t i=0;i<count;++i) {
+                const uint32_t entry = rd32(d, c.offset + 12 + uint64_t(i)*4);
+                if (entry + 4 > d.size()) continue;
+                const uint32_t name_off = rd32(d, entry);
+                auto name = gm_string(name_off);
+                if (!name.empty()) out.resources.push_back({std::string(tag), i, std::move(name)});
+            }
+        }
+    }
+    return out;
+}
+}

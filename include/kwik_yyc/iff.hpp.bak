@@ -1,0 +1,26 @@
+#pragma once
+#include <cstdint>
+#include <filesystem>
+#include <string>
+#include <vector>
+
+namespace kwik::yyc {
+struct IffChunk {
+    std::string tag;
+    uint64_t offset{};
+    uint32_t size{};
+};
+struct IffResource {
+    std::string kind;
+    uint32_t index{};
+    std::string name;
+};
+struct IffInfo {
+    uint32_t form_size{};
+    std::vector<IffChunk> chunks;
+    std::vector<IffResource> resources;
+    bool has(std::string_view tag) const;
+    std::string resource_name(std::string_view kind, uint32_t index) const;
+};
+IffInfo parse_game_data(const std::filesystem::path& path);
+}
